@@ -1,0 +1,213 @@
+# Linux Essentials: Bash Scripting
+
+A practical reference guide with detailed explanations and working examples.
+
+---
+
+## 3. Bash Scripting
+
+A bash script is a text file containing a sequence of shell commands, executed by the Bash interpreter.
+
+### 3.1 Basic Structure
+
+```bash
+#!/bin/bash
+# This is a comment
+echo "Hello, World!"
+```
+
+- `#!/bin/bash` is the **shebang** — tells the OS which interpreter to use.
+- Make the script executable: `chmod +x script.sh`
+- Run it: `./script.sh` or `bash script.sh`
+
+### 3.2 Variables
+
+```bash
+#!/bin/bash
+name="Alice"
+age=25
+echo "Name: $name, Age: $age"
+
+# Command substitution
+today=$(date +%Y-%m-%d)
+echo "Today is $today"
+```
+
+### 3.3 User Input
+
+```bash
+#!/bin/bash
+read -p "Enter your name: " username
+echo "Welcome, $username!"
+```
+
+### 3.4 Conditionals
+
+```bash
+#!/bin/bash
+read -p "Enter a number: " num
+
+if [ "$num" -gt 0 ]; then
+    echo "$num is positive"
+elif [ "$num" -lt 0 ]; then
+    echo "$num is negative"
+else
+    echo "$num is zero"
+fi
+```
+
+Common test operators:
+
+| Operator | Meaning |
+|---|---|
+| `-eq` / `-ne` | equal / not equal (numbers) |
+| `-gt` / `-lt` | greater than / less than |
+| `-ge` / `-le` | greater/less than or equal |
+| `==` / `!=` | equal / not equal (strings) |
+| `-z` / `-n` | string is empty / not empty |
+| `-f` | file exists |
+| `-d` | directory exists |
+| `-x` | file is executable |
+
+### 3.5 Loops
+
+**For loop:**
+```bash
+#!/bin/bash
+for i in 1 2 3 4 5; do
+    echo "Number: $i"
+done
+```
+
+**For loop over files:**
+```bash
+#!/bin/bash
+for file in /var/log/*.log; do
+    echo "Found log file: $file"
+done
+```
+
+**While loop:**
+```bash
+#!/bin/bash
+count=1
+while [ $count -le 5 ]; do
+    echo "Count is $count"
+    count=$((count + 1))
+done
+```
+
+**Until loop:**
+```bash
+#!/bin/bash
+n=1
+until [ $n -gt 3 ]; do
+    echo "n = $n"
+    n=$((n + 1))
+done
+```
+
+### 3.6 Functions
+
+```bash
+#!/bin/bash
+greet() {
+    local person=$1
+    echo "Hello, $person!"
+}
+
+greet "Bob"
+greet "Carol"
+```
+
+### 3.7 Arrays
+
+```bash
+#!/bin/bash
+fruits=("apple" "banana" "cherry")
+
+echo "First fruit: ${fruits[0]}"
+echo "All fruits: ${fruits[@]}"
+echo "Count: ${#fruits[@]}"
+
+for fruit in "${fruits[@]}"; do
+    echo "I like $fruit"
+done
+```
+
+### 3.8 Practical Example — Backup Script
+
+```bash
+#!/bin/bash
+# backup.sh - Backs up a directory with a timestamped name
+
+SOURCE_DIR="/home/user/project"
+BACKUP_DIR="/home/user/backups"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/project_backup_$TIMESTAMP.tar.gz"
+
+# Ensure backup directory exists
+mkdir -p "$BACKUP_DIR"
+
+# Check source exists
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "Error: Source directory not found!"
+    exit 1
+fi
+
+# Create compressed archive
+tar -czf "$BACKUP_FILE" "$SOURCE_DIR"
+
+if [ $? -eq 0 ]; then
+    echo "Backup successful: $BACKUP_FILE"
+else
+    echo "Backup failed!"
+    exit 1
+fi
+```
+
+Run it:
+```bash
+chmod +x backup.sh
+./backup.sh
+```
+
+### 3.9 Practical Example — Log Monitor Using grep
+
+```bash
+#!/bin/bash
+# error_check.sh - Alerts if errors found in a log file
+
+LOG_FILE="/var/log/app.log"
+ERROR_COUNT=$(grep -ci "error" "$LOG_FILE")
+
+if [ "$ERROR_COUNT" -gt 0 ]; then
+    echo "Warning: $ERROR_COUNT error(s) found in $LOG_FILE"
+    grep -ni "error" "$LOG_FILE"
+else
+    echo "No errors found."
+fi
+```
+
+### 3.10 Positional Arguments
+
+```bash
+#!/bin/bash
+# usage: ./greet.sh John 30
+echo "Name: $1"
+echo "Age: $2"
+echo "Script name: $0"
+echo "Total arguments: $#"
+echo "All arguments: $@"
+```
+
+---
+
+## Quick Reference Cheat Sheet
+
+```bash
+# bash
+#!/bin/bash                           # shebang
+chmod +x script.sh                    # make executable
+./script.sh                           # run
+```
