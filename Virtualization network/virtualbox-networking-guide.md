@@ -44,11 +44,11 @@ VBoxManage modifyvm "VM name" --nic1 <mode>
 
 ```
 ┌──────────────────────────────────────┐
-│              Host machine             │
-│  ┌──────────────┐   ┌──────────────┐  │
-│  │ NAT engine    │──▶│  Guest VM     │  │
-│  │ (like a router)│   │ 10.0.2.x     │  │
-│  └──────────────┘   └──────────────┘  │
+│              Host machine            │
+│  ┌──────────────┐   ┌──────────────┐ │
+│  │ NAT engine   │──▶│  Guest VM    │ │
+│  │(like a router)│  │ 10.0.2.x     │ │
+│  └──────────────┘   └──────────────┘ │
 └──────────────────────────────────────┘
               │
               ▼
@@ -66,8 +66,8 @@ Bridged mode makes the VM act like a **separate physical computer plugged direct
 
 ```
 ┌────────────┐     ┌────────────┐     ┌────────────┐
-│  Your PC   │     │  Guest VM   │     │  Router    │
-│ 192.168.1.5│     │ 192.168.1.9 │◀───▶│            │
+│  Your PC   │     │  Guest VM  │     │  Router    │
+│ 192.168.1.5│     │192.168.1.9 │◀───▶│           │
 └────────────┘     └────────────┘     └────────────┘
         both connect directly to the same network
 ```
@@ -84,7 +84,7 @@ VMs can talk to each other, but **nothing else can see them** — not your host,
 
 ```
 ┌──────────────┐        ┌──────────────┐
-│   VM 1        │◀──────▶│   VM 2        │
+│   VM 1       │◀──────▶│   VM 2      │
 └──────────────┘        └──────────────┘
         (both on internal network "intnet")
         host and internet: no access
@@ -101,7 +101,7 @@ Same as Internal, but your **host machine is also invited**. The VM(s) and your 
 
 ```
 ┌────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Your PC   │◀───▶│   VM 1        │◀───▶│   VM 2        │
+│  Your PC   │◀───▶│   VM 1      │◀───▶│   VM 2      │
 └────────────┘     └──────────────┘     └──────────────┘
            all connected, no internet access
 ```
