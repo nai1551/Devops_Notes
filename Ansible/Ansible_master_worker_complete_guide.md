@@ -468,6 +468,58 @@ ansible_user=worker
 
 SSH username.
 
+### Scaling to Multiple Groups (Why Ansible Is Scalable)
+
+The example above uses one group with one worker. In a real environment, you may have many servers of different types (web servers, database servers, etc.).
+
+Instead of running the same command on every server one by one, Ansible lets you group servers in the inventory and target them all with a single command.
+
+Example inventory with multiple groups:
+
+```ini
+[webservers]
+web1 ansible_host=192.168.56.111 ansible_user=worker
+web2 ansible_host=192.168.56.112 ansible_user=worker
+
+[dbservers]
+db1 ansible_host=192.168.56.121 ansible_user=worker
+db2 ansible_host=192.168.56.122 ansible_user=worker
+
+[all_workers:children]
+webservers
+dbservers
+```
+
+`all_workers:children` creates a "group of groups" that contains both `webservers` and `dbservers`.
+
+Now a single command can act on many servers at once:
+
+Check hostname on all servers:
+
+```bash
+ansible all_workers -a "hostname"
+```
+
+Install nginx only on web servers:
+
+```bash
+ansible webservers -b -m apt -a "name=nginx state=present"
+```
+
+Check disk space only on database servers:
+
+```bash
+ansible dbservers -a "df -h"
+```
+
+Ping every server in every group:
+
+```bash
+ansible all_workers -m ping
+```
+
+If more servers are added later, you only need to add lines to the inventory file — the commands and playbooks stay exactly the same. This is why Ansible is considered scalable: the same automation that works on one server works on thousands, without changing the commands.
+
 ---
 
 ## 12. Check the Inventory
@@ -1459,6 +1511,334 @@ ansible-playbook playbook.yml
 # Troubleshooting
 ansible workers -m ping -vvv
 ```
+
+---
+
+## 31. Variables
+
+Variables let you avoid hardcoding values (like package names, ports, or paths) directly in tasks. Instead, you define them once and reuse them.
+
+### Defining variables in a playbook
+
+```yaml
+---
+- name: Install a package using a variable
+  hosts: workers
+  become: true
+
+  vars:
+    package_name: nginx
+
+  tasks:
+    - name: Install the package
+      apt:
+        name: "{{ package_name }}"
+        state: present
+```
+
+### Defining variables in the inventory
+
+```ini
+[webservers]
+web1 ansible_host=192.168.56.111 ansible_user=worker package_name=nginx
+```
+
+### Passing variables on the command line
+
+```bash
+ansible-playbook playbook.yml --extra-vars "package_name=nginx"
+```
+
+Variables make the same playbook reusable for different packages, ports, or environments without editing the file itself.
+
+---
+
+## 32. Facts
+
+Facts are pieces of information Ansible automatically collects about a managed node (worker), such as its IP address, OS, memory, and hostname.
+
+Collect facts manually:
+
+```bash
+ansible workers -m setup
+```
+
+Example: filter facts for just the OS:
+
+```bash
+ansible workers -m setup -a "filter=ansible_distribution*"
+```
+
+### Using facts inside a playbook
+
+```yaml
+---
+- name: Show system facts
+  hosts: workers
+
+  tasks:
+    - name: Print OS and memory
+      debug:
+        msg: "OS is {{ ansible_distribution }}, memory is {{ ansible_memtotal_mb }} MB"
+```
+
+Facts are automatically gathered before tasks run (unless disabled with `gather_facts: false`), so `{{ ansible_distribution }}`, `{{ ansible_hostname }}`, etc. are available right away.
+
+---
+
+## 33. Handlers
+
+A handler is a task that only runs when notified by another task — typically used to restart a service after a config file changes.
+
+```yaml
+---
+- name: Configure nginx and restart only if config changes
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Copy nginx config file
+      copy:
+        src: files/nginx.conf
+        dest: /etc/nginx/nginx.conf
+      notify: Restart nginx
+
+  handlers:
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+```
+
+### How it works
+
+```text
+Task runs
+    |
+    v
+Did the task change anything?
+    |
+   Yes -> notify handler -> handler runs at end of play
+    |
+   No  -> handler is skipped
+```
+
+The handler only runs once, even if multiple tasks notify it, and only if a change actually happened — this avoids unnecessary service restarts.
+
+---
+
+## 34. Conditionals
+
+Conditionals let a task run only when a certain condition is true, using the `when` keyword.
+
+```yaml
+---
+- name: Install package based on OS
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Install nginx on Debian/Ubuntu
+      apt:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install nginx on RedHat/CentOS
+      yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+```
+
+### Conditional based on a variable
+
+```yaml
+    - name: Only run in production
+      debug:
+        msg: "Running production setup"
+      when: environment == "production"
+```
+
+Run it with:
+
+```bash
+ansible-playbook playbook.yml --extra-vars "environment=production"
+```
+
+---
+
+## 35. Loops
+
+Loops let a single task repeat for multiple items, instead of writing the same task many times.
+
+```yaml
+---
+- name: Install multiple packages
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Install a list of packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - nginx
+        - git
+        - curl
+```
+
+### Looping to create multiple files
+
+```yaml
+    - name: Create multiple directories
+      file:
+        path: "/home/worker/{{ item }}"
+        state: directory
+      loop:
+        - dir1
+        - dir2
+        - dir3
+```
+
+Without a loop, this would need one task per package or directory — the loop keeps the playbook short and easy to update.
+
+---
+
+## 36. Templates (Jinja2)
+
+Templates let you generate configuration files dynamically, inserting variables and facts into a file using Jinja2 syntax.
+
+Template file (`templates/nginx.conf.j2`):
+
+```text
+server {
+    listen 80;
+    server_name {{ ansible_hostname }};
+    root /var/www/{{ site_name }};
+}
+```
+
+Playbook using the template:
+
+```yaml
+---
+- name: Deploy nginx config from template
+  hosts: webservers
+  become: true
+
+  vars:
+    site_name: mysite
+
+  tasks:
+    - name: Generate nginx config
+      template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/sites-available/mysite.conf
+      notify: Restart nginx
+
+  handlers:
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+```
+
+Every server gets its own generated config file, filled in with its own hostname and variables — instead of copying one static file to every server.
+
+---
+
+## 37. Roles
+
+A role is a standard way to organize playbooks, variables, templates, and files into reusable, structured folders — useful once a project grows beyond a single playbook.
+
+### Standard role folder structure
+
+```text
+roles/
+└── nginx/
+    ├── tasks/
+    │   └── main.yml
+    ├── handlers/
+    │   └── main.yml
+    ├── templates/
+    │   └── nginx.conf.j2
+    ├── vars/
+    │   └── main.yml
+    └── defaults/
+        └── main.yml
+```
+
+Create a role skeleton:
+
+```bash
+ansible-galaxy init roles/nginx
+```
+
+### Using a role in a playbook
+
+```yaml
+---
+- name: Set up web servers
+  hosts: webservers
+  become: true
+
+  roles:
+    - nginx
+```
+
+Ansible automatically looks inside `roles/nginx/tasks/main.yml` for the tasks, `roles/nginx/handlers/main.yml` for handlers, and so on — keeping large projects organized instead of one huge playbook file.
+
+---
+
+## 38. Ansible Vault
+
+Ansible Vault encrypts sensitive data (passwords, API keys, secrets) so they can be stored safely in playbooks or variable files instead of in plain text.
+
+### Create an encrypted file
+
+```bash
+ansible-vault create secrets.yml
+```
+
+You will be prompted for a vault password, then can edit the file normally:
+
+```yaml
+db_password: SuperSecret123
+```
+
+### Edit an existing encrypted file
+
+```bash
+ansible-vault edit secrets.yml
+```
+
+### View an encrypted file
+
+```bash
+ansible-vault view secrets.yml
+```
+
+### Encrypt an existing plain-text file
+
+```bash
+ansible-vault encrypt vars.yml
+```
+
+### Run a playbook that uses vault-encrypted variables
+
+```bash
+ansible-playbook playbook.yml --ask-vault-pass
+```
+
+Or using a password file (avoids typing the password each run):
+
+```bash
+ansible-playbook playbook.yml --vault-password-file ~/.vault_pass.txt
+```
+
+This keeps secrets out of plain text and out of version control history, while still letting playbooks use them normally via `{{ db_password }}`.
 
 ---
 
