@@ -627,6 +627,8 @@ Example:
 
 ```bash
 ansible workers -m command -a "hostname"
+
+Use the command module and tell it to execute hostname on the Worker.
 ```
 
 Example:
