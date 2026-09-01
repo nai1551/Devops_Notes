@@ -613,6 +613,9 @@ General format:
 
 ```bash
 ansible <host-pattern> -m <module> -a "<arguments>"
+
+-m = WHAT Ansible module should I use?
+-a = WHAT arguments/command should that module execute?
 ```
 
 Example:
@@ -625,6 +628,8 @@ Example:
 
 ```bash
 ansible workers -m command -a "hostname"
+
+Use the command module and tell it to execute hostname on the Worker.
 ```
 
 Example:
