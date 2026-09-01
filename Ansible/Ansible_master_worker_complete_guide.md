@@ -577,6 +577,7 @@ It checks whether Ansible can:
 ---
 
 ## 14. Create ansible.cfg
+In Ansible, a .cfg file is a configuration file. It tells Ansible how it should behave when you run commands or playbooks.
 
 Create:
 
@@ -788,7 +789,13 @@ Example:
 ```bash
 ansible workers -b -m apt -a "name=nginx state=present"
 ```
+or 
+```bash
+  ansible workers -b -K -a "whoami"
+  -K means:
 
+--ask-become-pass
+```
 Check whether sudo works:
 
 ```bash
