@@ -188,7 +188,7 @@ Expected permission:
 
 ---
 
-## 5. Cloud-Init and Duplicate IP Addresses
+## 5. Troubleshoot (Cloud-Init and Duplicate IP Addresses)
 
 If both a static Netplan file and `50-cloud-init.yaml` configure the same interface, you may get multiple IP addresses and multiple default routes.
 
