@@ -1,0 +1,22 @@
+{
+  "name": "simple-todo-app",
+  "version": "1.0.0",
+  "description": "A minimal full-stack practice app: Node.js + Express + SQLite backend, plain HTML/CSS/JS frontend.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules npx jest --runInBand"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jest": "^30.5.1",
+    "supertest": "^7.2.2"
+  }
+}
