@@ -2,24 +2,16 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "flask-app"
+        IMAGE_NAME = "naim8855/flask-app:latest"
         NETWORK_NAME = "myapp-network"
         VOLUME_NAME = "db-data"
     }
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Pull Flask Image') {
             steps {
-                checkout scm
-            }
-        }
-
-        stage('Build Flask Image') {
-            steps {
-                dir('flask-app') {
-                    sh 'docker build -t $IMAGE_NAME .'
-                }
+                sh 'docker pull $IMAGE_NAME'
             }
         }
 
