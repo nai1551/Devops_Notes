@@ -1,0 +1,45 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "flask-app"
+        NETWORK_NAME = "myapp-network"
+        VOLUME_NAME = "db-data"
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Flask Image') {
+            steps {
+                dir('flask-app') {
+                    sh 'docker build -t $IMAGE_NAME .'
+                }
+            }
+        }
+
+        stage('Ensure Network Exists') {
+            steps {
+                sh '''
+                    docker network inspect $NETWORK_NAME >/dev/null 2>&1 || \
+                    docker network create $NETWORK_NAME
+                '''
+            }
+        }
+
+        stage('Ensure Volume Exists') {
+            steps {
+                sh '''
+                    docker volume inspect $VOLUME_NAME >/dev/null 2>&1 || \
+                    docker volume create $VOLUME_NAME
+                '''
+            }
+        }
+
+        stage('Start Database') {
+            steps {
