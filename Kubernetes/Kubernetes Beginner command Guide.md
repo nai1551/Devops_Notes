@@ -34,8 +34,12 @@ complete -o default -F __start_kubectl k
    - 5.4 Rollout and Rollback
 6. Networking in Kubernetes
 7. Services (ClusterIP, NodePort, LoadBalancer)
-8. Master Quick Reference
-9. New Topics (future additions)
+8. Secrets
+9. Volumes, PersistentVolume (PV) and PersistentVolumeClaim (PVC)
+10. DaemonSet
+11. StatefulSet
+12. Master Quick Reference
+13. New Topics (future additions)
 
 ---
 
@@ -1520,7 +1524,953 @@ k delete deployment web
 
 ---
 
-# Module 8: Master Quick Reference
+# Module 8: Secrets
+
+## Theory
+
+### What is a Secret?
+
+A **Secret** is a Kubernetes object that stores small amounts of **sensitive data**: passwords, API tokens, SSH keys, TLS certificates. Instead of writing a password inside your pod YAML or your image, you put it in a Secret and let the pod read it.
+
+**Why not just hard-code the password?**
+
+- Anyone who can see the YAML (or the Git repo, or the image) can see the password.
+- Changing a password would mean rebuilding the image.
+- A Secret keeps sensitive data separate and lets you control who can read it (RBAC).
+
+### Secret vs ConfigMap
+
+| | ConfigMap | Secret |
+|---|-----------|--------|
+| Stores | Normal config (URLs, feature flags) | Sensitive data (passwords, tokens) |
+| Stored as | Plain text | base64-encoded |
+| Used the same way? | Yes (env var or volume) | Yes (env var or volume) |
+
+### IMPORTANT: base64 is NOT encryption
+
+Secret values are stored **base64-encoded**. That is just an encoding anyone can reverse in one command (`base64 -d`). To really protect Secrets:
+
+- Limit access with **RBAC** (who can `get secrets`).
+- Turn on **encryption at rest** for etcd.
+- Never commit Secret YAML files with real values to Git.
+- Consider an external tool (Vault, cloud secret managers) for production.
+
+### Common Secret types
+
+| Type | Used for |
+|------|----------|
+| `Opaque` (default) | Any custom key-value data |
+| `kubernetes.io/dockerconfigjson` | Login for a private image registry |
+| `kubernetes.io/tls` | TLS certificate and private key |
+| `kubernetes.io/basic-auth` | Username and password |
+| `kubernetes.io/service-account-token` | Service account token |
+
+### Three ways a pod can use a Secret
+
+1. **One key as an environment variable** (`secretKeyRef`).
+2. **All keys as environment variables** (`envFrom`).
+3. **Mounted as files** in a volume (each key becomes a file).
+
+Difference: environment variables are fixed when the pod starts (changing the Secret later needs a pod restart). Mounted files are refreshed automatically after a short delay.
+
+## Commands
+
+### Create a Secret
+
+```bash
+# From literal values
+kubectl create secret generic db-secret --from-literal=username=admin --from-literal=password=Passw0rd
+k create secret generic db-secret --from-literal=username=admin --from-literal=password=Passw0rd
+
+# From a file (the file name becomes the key)
+kubectl create secret generic ssh-key --from-file=./id_rsa
+k create secret generic ssh-key --from-file=./id_rsa
+
+# From an env-style file (KEY=value per line)
+kubectl create secret generic app-secret --from-env-file=./app.env
+k create secret generic app-secret --from-env-file=./app.env
+
+# Private registry login
+kubectl create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password=<pass> --docker-email=<email>
+k create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password=<pass> --docker-email=<email>
+
+# TLS certificate
+kubectl create secret tls my-tls --cert=tls.crt --key=tls.key
+k create secret tls my-tls --cert=tls.crt --key=tls.key
+```
+
+### View Secrets
+
+```bash
+kubectl get secrets                    # list (short name: secret)
+k get secret
+
+kubectl describe secret db-secret      # shows key names and sizes, NOT the values
+k describe secret db-secret
+
+kubectl get secret db-secret -o yaml   # shows the base64 values
+k get secret db-secret -o yaml
+```
+
+### Decode a value
+
+```bash
+kubectl get secret db-secret -o jsonpath='{.data.password}' | base64 -d
+k get secret db-secret -o jsonpath='{.data.password}' | base64 -d
+```
+
+### Encode a value by hand (for YAML files)
+
+```bash
+echo -n 'admin' | base64        # YWRtaW4=
+echo -n 'Passw0rd' | base64     # UGFzc3cwcmQ=
+```
+
+Always use `-n`. Without it, a hidden newline is added to the value and your password will be wrong.
+
+### Secret YAML
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:                       # values must be base64-encoded
+  username: YWRtaW4=
+  password: UGFzc3cwcmQ=
+```
+
+Easier: use `stringData` and write normal text. Kubernetes encodes it for you.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+stringData:                 # plain text, converted to base64 automatically
+  username: admin
+  password: Passw0rd
+```
+
+```bash
+kubectl apply -f db-secret.yaml
+k apply -f db-secret.yaml
+```
+
+### Use a Secret in a pod
+
+**1. One key as an environment variable**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mysql-pod
+spec:
+  containers:
+  - name: mysql
+    image: mysql:8
+    env:
+    - name: MYSQL_ROOT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: db-secret        # the Secret name
+          key: password          # the key inside the Secret
+```
+
+**2. All keys as environment variables**
+
+```yaml
+spec:
+  containers:
+  - name: app
+    image: nginx:alpine
+    envFrom:
+    - secretRef:
+        name: db-secret          # every key in the Secret becomes an env var
+```
+
+(Each key becomes an env var with the same name as the key, here `username` and `password`.)
+
+**3. Mount as files**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-vol-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:alpine
+    volumeMounts:
+    - name: secret-vol
+      mountPath: /etc/secret     # each key becomes a file here
+      readOnly: true
+  volumes:
+  - name: secret-vol
+    secret:
+      secretName: db-secret
+```
+
+**Use a registry Secret to pull a private image**
+
+```yaml
+spec:
+  imagePullSecrets:
+  - name: regcred
+  containers:
+  - name: app
+    image: myregistry.com/private-app:1.0
+```
+
+### Verify inside the pod
+
+```bash
+kubectl exec secret-vol-pod -- ls /etc/secret
+kubectl exec secret-vol-pod -- cat /etc/secret/password
+kubectl exec mysql-pod -- env
+k exec secret-vol-pod -- ls /etc/secret
+k exec secret-vol-pod -- cat /etc/secret/password
+k exec mysql-pod -- env
+```
+
+### Edit and delete
+
+```bash
+kubectl edit secret db-secret          # values are base64 here
+k edit secret db-secret
+
+kubectl delete secret db-secret
+k delete secret db-secret
+```
+
+### Practice Lab: Secrets
+
+1. Create a Secret `db-secret` with `username=admin` and `password=Passw0rd`.
+2. Check it with `k describe secret db-secret` (values are hidden) and decode the password with `base64 -d`.
+3. Create a pod `mysql-pod` (YAML above) that reads `MYSQL_ROOT_PASSWORD` from the Secret.
+4. Run `k exec mysql-pod -- env` and find `MYSQL_ROOT_PASSWORD`.
+5. Mount the same Secret as files in a second pod and read `/etc/secret/password`.
+6. Delete the Secret and watch what happens to a new pod that uses it (see below).
+
+### Troubleshooting Secrets
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| Pod status `CreateContainerConfigError` | The Secret or the key does not exist. Check `k describe pod <name>` Events, then `k get secret` and the key names |
+| Wrong password inside the app | Value was encoded with a hidden newline. Re-encode with `echo -n` |
+| Changed Secret but pod still uses old value | Env vars do not refresh. Restart: `k rollout restart deployment/<name>` |
+| `ImagePullBackOff` on a private image | Missing or wrong `imagePullSecrets` |
+| Secret in another namespace not found | Secrets are namespaced; a pod can only use Secrets from its own namespace |
+
+---
+
+# Module 9: Volumes, PersistentVolume (PV) and PersistentVolumeClaim (PVC)
+
+## Theory
+
+### The problem: container storage is temporary
+
+Files written inside a container disappear when the container restarts or the pod is deleted. For databases, uploads, or logs you need storage that **outlives the pod**. Kubernetes solves this with **volumes**.
+
+### Types of volumes (simple view)
+
+| Volume | Lifetime | Use |
+|--------|----------|-----|
+| **emptyDir** | Lives as long as the pod. Gone when the pod is deleted. | Scratch space, sharing files between containers in the same pod |
+| **hostPath** | Uses a folder on the node. Survives pod deletion. | Testing only (data is tied to one node, security risk) |
+| **PersistentVolume + Claim** | Independent of any pod. Survives pod deletion. | Real persistent storage (disks, NFS, cloud volumes) |
+
+### PV, PVC and the pod: the parking analogy
+
+```
+   PersistentVolume (PV)        = a parking space that exists in the car park
+   PersistentVolumeClaim (PVC)  = a request: "I need a space of at least this size"
+   Pod                          = the car that uses the space it was given
+```
+
+- **PV:** a piece of storage in the cluster. Usually created by an admin, or created automatically. It is **cluster-wide** (no namespace).
+- **PVC:** a request for storage made by a user or application. It is **namespaced**.
+- Kubernetes **binds** a PVC to a matching PV. The pod then mounts the PVC.
+
+```
+  Pod  --uses-->  PVC  --bound to-->  PV  --is-->  Real disk (node folder, NFS, cloud disk)
+```
+
+Why two objects? So developers ask for "1Gi of storage" without needing to know where the disk really is.
+
+### How a PVC finds a PV (binding rules)
+
+A PVC binds to a PV when all of these match:
+
+1. The PV **capacity** is equal to or bigger than the request.
+2. The **access mode** is supported by the PV.
+3. The **storageClassName** is the same.
+
+Binding is one-to-one: one PV serves one PVC. If the PVC asks for 500Mi and the PV is 1Gi, the PVC gets the whole 1Gi PV.
+
+### Access modes
+
+| Mode | Short | Meaning |
+|------|-------|---------|
+| ReadWriteOnce | RWO | Read and write by a single node |
+| ReadOnlyMany | ROX | Read only by many nodes |
+| ReadWriteMany | RWX | Read and write by many nodes |
+| ReadWriteOncePod | RWOP | Read and write by a single pod |
+
+### Reclaim policy: what happens to the PV after the PVC is deleted
+
+| Policy | Result |
+|--------|--------|
+| **Retain** | PV and data are kept. An admin must clean it up manually. |
+| **Delete** | PV and the underlying storage are deleted automatically. |
+
+### PV status (phase)
+
+| Phase | Meaning |
+|-------|---------|
+| `Available` | Free, not yet claimed |
+| `Bound` | Claimed by a PVC |
+| `Released` | The PVC was deleted, but the PV is not yet reclaimed |
+| `Failed` | Automatic reclaim failed |
+
+### StorageClass and dynamic provisioning
+
+Creating PVs by hand does not scale. A **StorageClass** describes a type of storage ("fast SSD", "standard"). When a PVC names a StorageClass, Kubernetes **creates the PV automatically**. This is called **dynamic provisioning**, and it is how most clusters work (minikube, kind and cloud clusters have a default StorageClass).
+
+- A PVC with **no** `storageClassName` uses the cluster's **default** StorageClass.
+- A PVC with `storageClassName: ""` asks for **no** class, so it can only bind to a manually created PV that also has no class.
+
+## Commands
+
+### emptyDir: shared scratch space
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emptydir-pod
+spec:
+  containers:
+  - name: writer
+    image: busybox
+    command: ["sh", "-c", "echo hello > /data/msg.txt && sleep 3600"]
+    volumeMounts:
+    - name: shared
+      mountPath: /data
+  - name: reader
+    image: busybox
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: shared
+      mountPath: /data
+  volumes:
+  - name: shared
+    emptyDir: {}
+```
+
+```bash
+kubectl apply -f emptydir-pod.yaml
+k apply -f emptydir-pod.yaml
+
+kubectl exec emptydir-pod -c reader -- cat /data/msg.txt     # reader sees the writer's file
+k exec emptydir-pod -c reader -- cat /data/msg.txt
+```
+
+### hostPath: a folder on the node (testing only)
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostpath-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:alpine
+    volumeMounts:
+    - name: host-vol
+      mountPath: /usr/share/nginx/html
+  volumes:
+  - name: host-vol
+    hostPath:
+      path: /mnt/data
+      type: DirectoryOrCreate
+```
+
+### PersistentVolume (PV): manual creation
+
+There is no `kubectl create pv` command, so use YAML. File `pv-demo.yaml`:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-demo
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /mnt/data          # folder on the node (for labs only)
+```
+
+```bash
+kubectl apply -f pv-demo.yaml
+k apply -f pv-demo.yaml
+
+kubectl get pv               # STATUS should be Available
+k get pv
+```
+
+### PersistentVolumeClaim (PVC)
+
+File `pvc-demo.yaml`:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-demo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: manual   # must match the PV
+  resources:
+    requests:
+      storage: 500Mi
+```
+
+```bash
+kubectl apply -f pvc-demo.yaml
+k apply -f pvc-demo.yaml
+
+kubectl get pvc              # STATUS should be Bound
+k get pvc
+
+kubectl get pv,pvc           # see both together
+k get pv,pvc
+```
+
+The PV status changes from `Available` to `Bound`, and the PVC shows the PV name under VOLUME.
+
+### Use the PVC in a pod
+
+File `pvc-pod.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:alpine
+    volumeMounts:
+    - name: data
+      mountPath: /usr/share/nginx/html
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: pvc-demo    # the PVC name
+```
+
+```bash
+kubectl apply -f pvc-pod.yaml
+k apply -f pvc-pod.yaml
+```
+
+### Prove the data survives
+
+```bash
+# 1. Write a file into the volume
+kubectl exec pvc-pod -- sh -c 'echo "I survive pod deletion" > /usr/share/nginx/html/index.html'
+k exec pvc-pod -- sh -c 'echo "I survive pod deletion" > /usr/share/nginx/html/index.html'
+
+# 2. Delete the pod
+kubectl delete pod pvc-pod
+k delete pod pvc-pod
+
+# 3. Create it again
+kubectl apply -f pvc-pod.yaml
+k apply -f pvc-pod.yaml
+
+# 4. The file is still there
+kubectl exec pvc-pod -- cat /usr/share/nginx/html/index.html
+k exec pvc-pod -- cat /usr/share/nginx/html/index.html
+```
+
+### Dynamic provisioning (PVC without a manual PV)
+
+```bash
+kubectl get storageclass          # short: sc ; look for "(default)"
+k get sc
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-dynamic
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # no storageClassName: the default StorageClass creates a PV automatically
+```
+
+```bash
+kubectl apply -f pvc-dynamic.yaml
+kubectl get pv,pvc               # a new PV appears by itself
+k apply -f pvc-dynamic.yaml
+k get pv,pvc
+```
+
+### Inspect and delete
+
+```bash
+kubectl describe pv pv-demo
+k describe pv pv-demo
+
+kubectl describe pvc pvc-demo        # Events explain why it is Pending
+k describe pvc pvc-demo
+
+# Delete in this order: pod first, then PVC, then PV
+kubectl delete pod pvc-pod
+kubectl delete pvc pvc-demo
+kubectl delete pv pv-demo
+k delete pod pvc-pod
+k delete pvc pvc-demo
+k delete pv pv-demo
+```
+
+With reclaim policy `Retain`, after deleting the PVC the PV becomes `Released` and its data stays on disk until you clean it up.
+
+### Practice Lab: PV and PVC
+
+1. Create `pv-demo` (1Gi, `storageClassName: manual`) and check `k get pv` shows `Available`.
+2. Create `pvc-demo` (500Mi, `storageClassName: manual`) and check both show `Bound`.
+3. Create `pvc-pod` using the PVC. Write a file inside `/usr/share/nginx/html`.
+4. Delete the pod, recreate it, and confirm the file still exists.
+5. Delete pod, PVC and PV in that order. Check the PV status at each step.
+
+### Troubleshooting volumes
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| PVC stuck in `Pending` | No matching PV (size, access mode or `storageClassName` differ), or no default StorageClass. Read `k describe pvc` Events |
+| Pod stuck in `Pending` or `ContainerCreating` | PVC is not Bound yet, or volume cannot be mounted. `k describe pod` |
+| PV shows `Released` and will not rebind | Old claim reference remains. Delete and recreate the PV, or edit out `claimRef` |
+| Data lost after pod deletion | You used `emptyDir`. Use a PVC |
+| Cannot delete PVC (stuck `Terminating`) | A pod is still using it. Delete the pod first |
+
+---
+
+# Module 10: DaemonSet
+
+## Theory
+
+### What is a DaemonSet?
+
+A **DaemonSet** makes sure **exactly one copy of a pod runs on every node** (or on selected nodes).
+
+- A new node joins the cluster: the DaemonSet automatically starts a pod on it.
+- A node is removed: its pod is cleaned up.
+- You do **not** set `replicas`. The number of pods equals the number of matching nodes.
+
+Analogy: a security guard posted at **every building** in a campus. A new building opens, a new guard is posted automatically.
+
+```
+  Node 1: [DS pod]      Node 2: [DS pod]      Node 3: [DS pod]
+```
+
+### Typical use cases
+
+| Use case | Example tools |
+|----------|---------------|
+| Log collection | Fluentd, Filebeat |
+| Node monitoring | Prometheus node-exporter, Datadog agent |
+| Networking | `kube-proxy`, CNI plugins (Calico, Flannel) |
+| Storage agents | Ceph, GlusterFS daemons |
+
+You can see real DaemonSets in your cluster: `k get ds -n kube-system` (you will find `kube-proxy` and your CNI plugin).
+
+### DaemonSet vs Deployment
+
+| | Deployment | DaemonSet |
+|---|-----------|-----------|
+| Number of pods | You choose `replicas` | One per node, automatic |
+| Pod placement | Scheduler picks any node | One on each node |
+| Typical use | Web apps, APIs | Node-level agents |
+
+### Control plane nodes and tolerations
+
+Control plane nodes usually have a **taint** that stops normal pods from running there. A DaemonSet pod will not appear on them unless you add a **toleration**.
+
+```yaml
+    spec:
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+```
+
+### Run only on some nodes
+
+Add a `nodeSelector` in the pod template, for example `nodeSelector: { disk: ssd }`, and label the nodes with `k label node <node> disk=ssd`.
+
+### Updates
+
+DaemonSets support `RollingUpdate` (default) and `OnDelete` (pods are replaced only when you delete them manually).
+
+## Commands
+
+### Create a DaemonSet
+
+There is no `kubectl create daemonset` command. Use YAML. **Fast trick:** generate a Deployment YAML, then change it.
+
+```bash
+kubectl create deployment monitoring-daemon --image=nginx:alpine --dry-run=client -o yaml > ds.yaml
+k create deployment monitoring-daemon --image=nginx:alpine --dry-run=client -o yaml > ds.yaml
+
+vi ds.yaml
+# Change:  kind: Deployment  ->  kind: DaemonSet
+# Remove:  replicas: 1
+# Remove:  strategy: {}
+# Remove:  status: {}
+```
+
+Final file `monitoring-daemon.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: monitoring-daemon
+spec:
+  selector:
+    matchLabels:
+      app: monitoring-agent
+  template:
+    metadata:
+      labels:
+        app: monitoring-agent
+    spec:
+      containers:
+      - name: monitoring-agent
+        image: nginx:alpine
+```
+
+```bash
+kubectl apply -f monitoring-daemon.yaml
+k apply -f monitoring-daemon.yaml
+```
+
+### View and manage
+
+```bash
+kubectl get daemonsets                 # short name: ds
+k get ds
+
+kubectl get ds -n kube-system          # real examples: kube-proxy, CNI
+k get ds -n kube-system
+
+kubectl get ds -A                      # all namespaces
+k get ds -A
+
+kubectl get pods -o wide               # one pod on each NODE
+k get pods -o wide
+
+kubectl describe ds monitoring-daemon
+k describe ds monitoring-daemon
+
+kubectl rollout status ds/monitoring-daemon
+k rollout status ds/monitoring-daemon
+
+kubectl set image ds/monitoring-daemon monitoring-agent=nginx:1.25
+k set image ds/monitoring-daemon monitoring-agent=nginx:1.25
+
+kubectl rollout undo ds/monitoring-daemon
+k rollout undo ds/monitoring-daemon
+
+kubectl delete ds monitoring-daemon
+k delete ds monitoring-daemon
+```
+
+How to read `k get ds`:
+
+```
+NAME                DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR
+monitoring-daemon   2         2         2       2            2           <none>
+```
+
+`DESIRED` = number of nodes that should run the pod.
+
+### Practice Lab: DaemonSet
+
+1. Run `k get nodes` to count your nodes.
+2. Create `monitoring-daemon` from the YAML above.
+3. Check `k get ds` and `k get pods -o wide`: there should be one pod per node.
+4. Delete one of its pods. It is recreated on the same node.
+5. Update the image with `k set image` and watch `k rollout status ds/monitoring-daemon`.
+6. Look at `k get ds -n kube-system` and find `kube-proxy`.
+7. Delete the DaemonSet.
+
+### Troubleshooting DaemonSet
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| No pod on the control plane node | Node taint. Add a toleration |
+| `DESIRED` is `0` | `nodeSelector` matches no node. Check node labels with `k get nodes --show-labels` |
+| Pod stuck `Pending` on one node | Not enough resources or taint on that node. `k describe pod` |
+
+---
+
+# Module 11: StatefulSet
+
+## Theory
+
+### What is a StatefulSet?
+
+A **StatefulSet** runs pods that need a **stable identity and their own storage**, such as databases (MySQL, PostgreSQL, MongoDB) and systems like Kafka or Elasticsearch.
+
+With a Deployment, pods are identical and interchangeable: random names, shared or no storage, any pod can be replaced by any other. With a database, each pod is **different** (one is the primary, others are replicas) and each needs **its own data**. That is what a StatefulSet provides.
+
+### The 4 guarantees of a StatefulSet
+
+| Guarantee | What it means |
+|-----------|---------------|
+| **Stable pod names** | `web-0`, `web-1`, `web-2` (not random). A recreated pod keeps its name. |
+| **Ordered start and stop** | Pods start one by one: `web-0`, then `web-1`, then `web-2`. They stop in reverse order. |
+| **Stable network identity** | Each pod has a fixed DNS name through a **headless Service**. |
+| **Stable storage** | Each pod gets its **own PVC**. When the pod is recreated, it reattaches to the same PVC and the same data. |
+
+### Deployment vs StatefulSet
+
+| | Deployment | StatefulSet |
+|---|-----------|-------------|
+| Pod names | Random (`web-7d9f-xk2lp`) | Ordered (`web-0`, `web-1`) |
+| Start order | All at once | One by one (default) |
+| Storage | Shared or none | Separate PVC per pod |
+| Network identity | Changes when pod is replaced | Stable DNS per pod |
+| Use for | Stateless apps (web, API) | Stateful apps (databases, queues) |
+
+### Headless Service
+
+A normal Service gives one virtual IP. A **headless Service** (`clusterIP: None`) has **no virtual IP**. Instead, DNS returns the **individual pod addresses**, and each pod gets its own DNS name:
+
+```
+<pod-name>.<service-name>.<namespace>.svc.cluster.local
+web-0.web-svc.default.svc.cluster.local
+web-1.web-svc.default.svc.cluster.local
+```
+
+The StatefulSet field `serviceName` must name this headless Service.
+
+### volumeClaimTemplates
+
+Instead of one PVC for all pods, you give a **template**. Kubernetes creates a PVC per pod automatically:
+
+```
+web-0  ->  PVC data-web-0
+web-1  ->  PVC data-web-1
+web-2  ->  PVC data-web-2
+```
+
+Important: when you delete a pod or scale down, **the PVCs are kept** so data is safe. You must delete PVCs yourself.
+
+This needs dynamic provisioning (a default StorageClass) or pre-created PVs. If none exists, the PVCs stay `Pending`.
+
+### Other points
+
+- **podManagementPolicy:** `OrderedReady` (default) or `Parallel` (start all together, ordering not required).
+- **Updates:** RollingUpdate goes in **reverse order** (`web-2`, then `web-1`, then `web-0`).
+- Deleting a StatefulSet does **not** guarantee ordered shutdown. To stop in order, scale it to 0 first.
+
+## Commands
+
+### Create a StatefulSet
+
+There is no `kubectl create statefulset`. Use YAML. File `web-statefulset.yaml` (headless Service and StatefulSet together):
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+spec:
+  clusterIP: None            # headless
+  selector:
+    app: web
+  ports:
+  - port: 80
+    name: web
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web
+spec:
+  serviceName: web-svc       # must match the headless Service name
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+```
+
+Tip: you can generate a starting point from a Deployment (`k create deployment ... --dry-run=client -o yaml`), then change `kind` to `StatefulSet` and add `serviceName` and `volumeClaimTemplates`.
+
+```bash
+kubectl apply -f web-statefulset.yaml
+k apply -f web-statefulset.yaml
+```
+
+### Watch the ordered startup
+
+```bash
+kubectl get pods -w          # -w = watch; web-0 first, then web-1, then web-2
+k get pods -w
+```
+
+### View and manage
+
+```bash
+kubectl get statefulsets             # short name: sts
+k get sts
+
+kubectl get pods -l app=web
+k get pods -l app=web
+
+kubectl get pvc                      # data-web-0, data-web-1, data-web-2
+k get pvc
+
+kubectl describe sts web
+k describe sts web
+
+kubectl scale sts web --replicas=5   # adds web-3, web-4 in order
+k scale sts web --replicas=5
+
+kubectl scale sts web --replicas=2   # removes web-4, web-3, web-2 in reverse order
+k scale sts web --replicas=2
+
+kubectl rollout status sts/web
+k rollout status sts/web
+
+kubectl set image sts/web nginx=nginx:1.25
+k set image sts/web nginx=nginx:1.25
+
+kubectl rollout undo sts/web
+k rollout undo sts/web
+```
+
+### Prove stable identity and storage
+
+```bash
+# 1. Write unique data into web-0
+kubectl exec web-0 -- sh -c 'echo "hello from web-0" > /usr/share/nginx/html/index.html'
+k exec web-0 -- sh -c 'echo "hello from web-0" > /usr/share/nginx/html/index.html'
+
+# 2. Delete the pod
+kubectl delete pod web-0
+k delete pod web-0
+
+# 3. A new pod with the SAME name appears and reattaches to the SAME PVC
+kubectl get pods -w
+k get pods -w
+
+# 4. The data is still there
+kubectl exec web-0 -- cat /usr/share/nginx/html/index.html
+k exec web-0 -- cat /usr/share/nginx/html/index.html
+```
+
+### Test the stable DNS name
+
+```bash
+kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup web-0.web-svc
+k run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup web-0.web-svc
+```
+
+### Clean up (the PVCs stay unless you delete them)
+
+```bash
+kubectl delete sts web
+kubectl delete svc web-svc
+kubectl get pvc                                  # they are still here
+kubectl delete pvc data-web-0 data-web-1 data-web-2
+
+k delete sts web
+k delete svc web-svc
+k get pvc
+k delete pvc data-web-0 data-web-1 data-web-2
+```
+
+### Practice Lab: StatefulSet
+
+1. Create the headless Service and StatefulSet from the YAML above.
+2. Watch with `k get pods -w` and note the order `web-0`, `web-1`, `web-2`.
+3. Run `k get pvc` and find one PVC per pod.
+4. Write a different file in `web-0` and `web-1`, delete both pods, and confirm each keeps its own data.
+5. Scale to 5, then back to 2, and note which pods are removed first.
+6. Check the DNS name `web-0.web-svc` with a test pod.
+7. Delete the StatefulSet, then delete the PVCs.
+
+### Troubleshooting StatefulSet
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| `web-0` stays `Pending` | PVC is `Pending` (no default StorageClass or no PV). `k describe pvc data-web-0` |
+| `web-1` never starts | Ordered startup: `web-0` is not Ready yet. Fix `web-0` first |
+| DNS name does not resolve | Headless Service missing, or `serviceName` does not match, or selector labels differ |
+| Old data appears in a "new" setup | PVCs were kept from a previous StatefulSet. Delete the PVCs to start clean |
+
+---
+
+## Workload Comparison: Deployment vs DaemonSet vs StatefulSet
+
+| | Deployment | DaemonSet | StatefulSet |
+|---|-----------|-----------|-------------|
+| Purpose | Stateless apps | One pod per node | Stateful apps |
+| Number of pods | `replicas` | One per node | `replicas` |
+| Pod names | Random | Random | Ordered (`name-0`, `name-1`) |
+| Storage | Shared or none | Usually host paths | Own PVC per pod |
+| Needs headless Service | No | No | Yes (`serviceName`) |
+| Example | Web server, API | Log collector, `kube-proxy` | MySQL, Kafka |
+| Short name | `deploy` | `ds` | `sts` |
+
+---
+
+# Module 12: Master Quick Reference
 
 | Task | kubectl | k |
 |------|---------|---|
@@ -1567,11 +2517,19 @@ k delete deployment web
 | Port-forward | `kubectl port-forward svc/<name> 8080:80` | `k port-forward svc/<name> 8080:80` |
 | Delete service | `kubectl delete svc <name>` | `k delete svc <name>` |
 | Count items | `kubectl get <type> --no-headers` then add `wc -l` | `k get <type> --no-headers` then add `wc -l` |
+| Create secret | `kubectl create secret generic <name> --from-literal=<key>=<value>` | `k create secret generic <name> --from-literal=<key>=<value>` |
+| Decode secret value | `kubectl get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` | `k get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` |
+| List PV and PVC | `kubectl get pv,pvc` | `k get pv,pvc` |
+| List StorageClasses | `kubectl get storageclass` | `k get sc` |
+| List DaemonSets | `kubectl get daemonsets` | `k get ds` |
+| List StatefulSets | `kubectl get statefulsets` | `k get sts` |
+| Scale StatefulSet | `kubectl scale sts <name> --replicas=<n>` | `k scale sts <name> --replicas=<n>` |
+| Watch pods live | `kubectl get pods -w` | `k get pods -w` |
 | Explain a field | `kubectl explain <path>` | `k explain <path>` |
 
 ---
 
-# Module 9: New Topics (future additions)
+# Module 13: New Topics (future additions)
 
 New questions and commands will be added below as new modules.
 
