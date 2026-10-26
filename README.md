@@ -31,14 +31,6 @@ The goal is to maintain a structured knowledge base that helps me revise importa
 - SSH authentication
 - GitHub workflows
 
-### ☁️ AWS & Cloud Computing
-- AWS fundamentals
-- IAM users, groups, roles, and policies
-- EC2 instances and key pairs
-- AMIs and EBS snapshots
-- VPC, subnets, route tables, and Internet Gateways
-- Security Groups and cloud networking
-
 ### 🐳 Docker & Containers
 - Container fundamentals
 - Images, containers, and registries
