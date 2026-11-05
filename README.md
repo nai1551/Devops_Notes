@@ -106,9 +106,10 @@ flowchart LR
 - [x] GitHub Actions
 - [x] Ansible
 - [x] CI/CD Project
+- [x] AWS
 - [ ] Terraform *(coming soon)*
 - [ ] Monitoring (Prometheus & Grafana) *(coming soon)*
-- [ ] Cloud (AWS) *(coming soon)*
+
 
 ---
 
